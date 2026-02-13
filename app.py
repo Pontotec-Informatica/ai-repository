@@ -12,7 +12,7 @@ st.markdown("""
     <style>
     .main { max-width: 500px; margin: 0 auto; }
     .stButton>button { width: 100%; border-radius: 20px; background-color: #007BFF; color: white; font-weight: bold; height: 3em; }
-    .premium-box { background-color: #f0f2f6; padding: 20px; border-radius: 15px; border: 1px solid #007BFF; }
+    .premium-box { background-color: #f0f2f6; padding: 20px; border-radius: 15px; border: 1px solid #007BFF; margin-bottom: 20px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -45,12 +45,10 @@ st.subheader("Seu guia logístico inteligente")
 
 cidade = st.text_input("Onde você está ou para onde vai?", placeholder="Ex: Paraty, RJ")
 
-# Captura contexto temporal
 agora = get_brasilia_time()
 hora_atual = agora.strftime("%H:%M")
 data_atual = agora.strftime("%d/%m/%Y")
 
-# Estratégia de Negócio: Seleção de Tipo de Roteiro
 tipo_roteiro = st.radio("O que você precisa?", ["Roteiro Rápido (Hoje)", "Planejamento de Vários Dias"])
 
 col1, col2 = st.columns(2)
@@ -61,7 +59,6 @@ with col1:
     else:
         duracao = st.number_input("Duração (em dias)", min_value=2, max_value=30, value=3)
         unidade = "dias"
-    
     veiculo = st.selectbox("Veículo", ["Carro", "Motorhome", "Van/Kombi", "A pé"])
 
 with col2:
@@ -70,30 +67,46 @@ with col2:
 
 pet = st.toggle("Levando Pet? 🐾")
 vibe = st.multiselect("Vibe do passeio", ["Natureza", "História/Cultura", "Gastronomia", "Trabalho/Wi-Fi", "Praia"])
-pedidos = st.text_area("Pedidos específicos (ex: evitar ladeiras, vegetariano, trilhas leves)")
+pedidos = st.text_area("Pedidos específicos?")
+
+# --- CAMPO DE CUPOM ---
+cupom = st.text_input("Possui código de parceiro/pousada? (Opcional)")
 
 # --- LÓGICA DE PROCESSAMENTO ---
 if st.button("Gerar Roteiro"):
     if not cidade:
         st.warning("Por favor, informe a cidade.")
     else:
-        # Lógica de Paywall (Modelo de Negócio)
-        # Exemplo: Mais de 6 horas ou Vários Dias são pagos
+        # Lógica de Paywall
         is_premium = tipo_roteiro == "Planejamento de Vários Dias" or (tipo_roteiro == "Roteiro Rápido (Hoje)" and duracao > 6)
-        
-        # Simulação de verificação de cupom (Para parcerias com pousadas)
-        # Se você passar ?pousada=nomedapousada na URL, poderia liberar aqui.
-        cupom = st.text_input("Possui código de parceiro/pousada? (Opcional)")
-        liberado = True if cupom.lower() == "tripfree" else not is_premium # "tripfree" é um exemplo de cupom
+        liberado = True if (cupom and cupom.lower() == "tripfree") else not is_premium
 
         if not liberado:
             st.markdown(f"""
             <div class="premium-box">
                 <h4>🚀 Roteiro Premium Detectado</h4>
-                <p>Planejamentos de <b>{duracao} {unidade}</b> exigem um nível maior de processamento logístico.</p>
+                <p>Planejamentos de <b>{duracao} {unidade}</b> exigem mais processamento logístico.</p>
                 <p><b>Valor: R$ 9,90</b></p>
             </div>
             """, unsafe_allow_html=True)
             st.link_button("💳 Desbloquear agora no Stripe", "https://seu-link-de-pagamento-aqui.com")
             st.info("Dica: Use o cupom 'tripfree' para testar a liberação agora.")
         else:
+            with st.spinner('Consultando clima e logística...'):
+                clima = get_weather(cidade)
+                
+                prompt = f"""
+                Gere um roteiro detalhado para {cidade}.
+                DURAÇÃO: {duracao} {unidade}.
+                INÍCIO: {hora_atual if unidade == 'horas' else 'Manhã do dia 1'}.
+                CLIMA ATUAL: {clima}.
+                PERFIL: Veículo {veiculo}, Grupo {grupo}, Pet {pet}, Orçamento {orcamento}.
+                VIBE: {vibe}. Pedidos: {pedidos}.
+                REGRAS: Divida por horários ou dias. Se chover, locais fechados. Formate com Markdown e emojis.
+                """
+                
+                try:
+                    completion = client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[
+                            {"role": "system", "
