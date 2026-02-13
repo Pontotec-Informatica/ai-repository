@@ -3,5 +3,5 @@ openai
 requests
 pytz
 supabase
-Plaintext
 googlemaps
+
