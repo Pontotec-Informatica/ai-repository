@@ -36,40 +36,44 @@ def get_weather(city):
         return "Clima indisponível"
 
 def buscar_detalhes_google(nome_local, cidade_usuario):
-    """Valida se o local é turístico/lazer e se pertence à cidade correta"""
+    """Busca o local no Google com filtro rígido de categoria e cidade"""
     try:
+        # Lista de palavras que a IA costuma colocar em negrito mas não são locais
+        blacklist_termos = ['dica', 'duração', 'bairro', 'descrição', 'roteiro', 'início', 'café', 'almoço', 'jantar']
+        if nome_local.lower() in blacklist_termos:
+            return None
+
         query_completa = f"{nome_local}, {cidade_usuario}"
         result = gmaps.find_place(
             input=query_completa,
             input_type="textquery",
-            fields=["name", "formatted_address", "place_id", "types", "rating"],
+            fields=["name", "formatted_address", "place_id", "types"],
             language="pt-BR"
         )
         
         if result['status'] == 'OK' and result['candidates']:
             place = result['candidates'][0]
-            tipos_google = place.get('types', [])
+            tipos = place.get('types', [])
             
-            # Filtros de segurança contra locais irrelevantes ou de serviço
-            proibidos = ['waste_management', 'garbage_collection', 'local_government_office', 'establishment', 'cemetery', 'industrial']
-            permitidos = ['park', 'restaurant', 'food', 'tourist_attraction', 'museum', 'church', 'point_of_interest', 'bakery', 'cafe', 'bar', 'shopping_mall']
-            
-            if any(t in proibidos for t in tipos_google) or not any(t in permitidos for t in tipos_google):
+            # Filtro de categorias (Lazer e Gastronomia)
+            permitidos = ['park', 'restaurant', 'food', 'tourist_attraction', 'museum', 'church', 'point_of_interest', 'bakery', 'cafe', 'bar', 'shopping_mall', 'aquarium', 'art_gallery']
+            if not any(t in permitidos for t in tipos):
                 return None
 
             nome_google = place.get('name', '').lower()
             endereco = place.get('formatted_address', '').lower()
             cidade_base = cidade_usuario.split(',')[0].strip().lower()
 
+            # Valida se está na cidade certa
             if cidade_base not in endereco:
                 return None
             
-            palavras_ia = set(re.findall(r'\w+', nome_local.lower()))
-            palavras_google = set(re.findall(r'\w+', nome_google))
-            if not any(p in palavras_google for p in palavras_ia if len(p) > 3):
+            # Valida se o nome faz sentido
+            palavras_ia = [p for p in re.findall(r'\w+', nome_local.lower()) if len(p) > 3]
+            if not any(p in nome_google for p in palavras_ia):
                 return None
 
-            maps_url = f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(nome_google)}&query_place_id={place['place_id']}"
+            maps_url = f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(place['name'])}&query_place_id={place['place_id']}"
             return {"nome": place['name'], "url": maps_url}
     except:
         return None
@@ -82,12 +86,8 @@ st.title("📍 NomadIA Pro")
 if "roteiro_id" in st.query_params:
     res = supabase.table("roteiros").select("*").eq("id", st.query_params["roteiro_id"]).execute()
     if res.data:
-        roteiro = res.data[0]
-        st.success(f"Roteiro para: {roteiro['cidade']}")
-        st.markdown(roteiro['conteudo'])
-        if st.button("✨ Criar Novo"):
-            st.query_params.clear()
-            st.rerun()
+        st.success(f"Roteiro Carregado: {res.data[0]['cidade']}")
+        st.markdown(res.data[0]['conteudo'])
         st.stop()
 
 # FORMULÁRIO
@@ -96,12 +96,8 @@ tipo_roteiro = st.radio("Duração:", ["Horas (Hoje)", "Vários Dias"], horizont
 
 col1, col2 = st.columns(2)
 with col1:
-    if tipo_roteiro == "Horas (Hoje)":
-        duracao = st.number_input("Horas", 1, 24, 4)
-        unidade = "horas"
-    else:
-        duracao = st.number_input("Dias", 1, 30, 3)
-        unidade = "dias"
+    duracao = st.number_input("Quantidade", 1, 30, 4)
+    unidade = "horas" if tipo_roteiro == "Horas (Hoje)" else "dias"
     veiculo = st.selectbox("Transporte", ["A pé", "Uber/Táxi", "Carro", "Transporte Público"])
 
 with col2:
@@ -109,7 +105,6 @@ with col2:
     orcamento = st.select_slider("Orçamento", options=["Econômico", "Médio", "Luxo"])
 
 pet = st.toggle("Levando Pet? 🐾")
-vibe = st.multiselect("Vibe", ["Gastronomia", "Natureza", "História", "Cultura", "Lazer"])
 pedidos = st.text_area("Pedidos específicos")
 cupom = st.text_input("Cupom de Desconto")
 
@@ -121,50 +116,44 @@ if st.button("Gerar Roteiro Logístico 🚀"):
         pode_gerar = (cupom.lower() == "tripfree") if cupom else not is_premium
 
         if not pode_gerar:
-            st.markdown('<div style="background-color:#f0f2f6;padding:20px;border-radius:15px;border:1px solid #007BFF;text-align:center;"><h4>🚀 Roteiro Premium</h4><p>Use o cupom <b>TRIPFREE</b></p></div>', unsafe_allow_html=True)
+            st.info("Use o cupom TRIPFREE para roteiros longos.")
         else:
-            with st.spinner('Otimizando rota e validando locais...'):
+            with st.spinner('Otimizando rota...'):
                 agora = get_brasilia_time()
                 clima = get_weather(cidade)
                 
                 system_prompt = f"""
-                Você é o guia NomadIA Pro especializado em logística urbana. 
-                Sua tarefa é criar um roteiro em {cidade} que faça sentido geográfico.
-                
-                DIRETRIZES DE LOGÍSTICA:
-                1. Agrupe os locais por PROXIMIDADE. Não cruze a cidade sem necessidade.
-                2. Priorize os pontos turísticos e restaurantes MAIS BEM AVALIADOS.
-                3. Se o transporte for '{veiculo}', ajuste a distância entre as paradas.
-                4. Comece o roteiro de onde o usuário provavelmente estaria (Centro ou entrada da cidade).
-                5. Mencione o BAIRRO de cada local para o usuário se localizar.
-                6. Pet={pet}: Se True, só indique locais com área externa ou conhecidos como pet friendly.
-                7. Use nomes oficiais entre asteriscos duplos (Ex: **Parque da Rua do Porto**).
+                Você é o NomadIA Pro. Crie um roteiro em {cidade}.
+                LOGÍSTICA: Agrupe locais próximos. Use uma sequência linear.
+                REGRAS DE FORMATAÇÃO:
+                - Coloque APENAS o nome dos estabelecimentos/parques em negrito (Ex: **Restaurante O Casarão**).
+                - NÃO use negrito em palavras como 'Dica', 'Horário' ou 'Bairro'.
+                - Informe o Bairro e uma Dica curta para cada parada.
+                - Pet Friendly: {pet}.
                 """
-
-                user_prompt = f"Crie um roteiro de {duracao} {unidade} em {cidade}. Orçamento {orcamento}. Vibe {vibe}. Pedidos: {pedidos}."
 
                 completion = client.chat.completions.create(
                     model="gpt-4o-mini",
-                    messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+                    messages=[{"role": "system", "content": system_prompt}, 
+                              {"role": "user", "content": f"Roteiro de {duracao} {unidade} em {cidade}. Orçamento {orcamento}. {pedidos}"}],
                     temperature=0.3
                 )
                 
                 resposta_ia = completion.choices[0].message.content
+                
+                # BUSCA DE LINKS
                 locais = re.findall(r"\*\*(.*?)\*\*", resposta_ia)
                 roteiro_final = resposta_ia
-                
                 for local in set(locais):
-                    if len(local) > 3:
-                        info = buscar_detalhes_google(local, cidade)
-                        if info:
-                            roteiro_final = roteiro_final.replace(f"**{local}**", f"**{local}** [📍]({info['url']})")
-                        else:
-                            roteiro_final = roteiro_final.replace(f"**{local}**", f"*{local} (Verificar local)*")
-
+                    info = buscar_detalhes_google(local, cidade)
+                    if info:
+                        roteiro_final = roteiro_final.replace(f"**{local}**", f"**[{local}]({info['url']})**")
+                
                 st.markdown("---")
-                st.info(f"🌦️ {clima} | 🕒 Início: {agora.strftime('%H:%M')}")
+                st.info(f"🌦️ {clima} | 🕒 {agora.strftime('%H:%M')}")
                 st.markdown(roteiro_final)
 
+                # SALVAR NO BANCO
                 try:
                     res_db = supabase.table("roteiros").insert({"cidade": cidade, "conteudo": roteiro_final}).execute()
                     link_share = f"https://nomadia.streamlit.app?roteiro_id={res_db.data[0]['id']}"
