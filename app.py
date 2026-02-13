@@ -4,17 +4,59 @@ import urllib.parse
 from datetime import datetime
 import requests
 import pytz
+from supabase import create_client, Client
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="NomadAI Pro", page_icon="📍", layout="centered")
 
+# -------------------------
+# SUPABASE LOGIN
+# -------------------------
+SUPABASE_URL = st.secrets["SUPABASE_URL"]
+SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# tenta recuperar sessão existente
+session = supabase.auth.get_session()
+
+if session and session.session:
+    st.session_state["user"] = session.session.user.email
+
+# --- TELA DE LOGIN ---
+if "user" not in st.session_state:
+
+    st.title("🚐 NomadAI")
+    st.subheader("Seu copiloto inteligente de viagem")
+
+    st.markdown("Entre para gerar roteiros personalizados.")
+
+    if st.button("🔵 Entrar com Google"):
+        auth_url = supabase.auth.sign_in_with_oauth({
+            "provider": "google",
+        })
+        st.link_button("👉 Clique aqui para fazer login", auth_url.url)
+
+    st.stop()
+
+# -------------------------
+# USUÁRIO LOGADO
+# -------------------------
+st.sidebar.success(f"✅ Logado como\n{st.session_state['user']}")
+
+if st.sidebar.button("Sair"):
+    supabase.auth.sign_out()
+    st.session_state.clear()
+    st.rerun()
+
+# --- ESTILO ---
 st.markdown("""
-    <style>
-    .main { max-width: 500px; margin: 0 auto; }
-    .stButton>button { width: 100%; border-radius: 20px; background-color: #007BFF; color: white; font-weight: bold; height: 3em; }
-    .premium-box { background-color: #f0f2f6; padding: 20px; border-radius: 15px; border: 1px solid #007BFF; margin-bottom: 20px; }
-    </style>
-    """, unsafe_allow_html=True)
+<style>
+.main { max-width: 500px; margin: 0 auto; }
+.stButton>button { width: 100%; border-radius: 20px; background-color: #007BFF; color: white; font-weight: bold; height: 3em; }
+.premium-box { background-color: #f0f2f6; padding: 20px; border-radius: 15px; border: 1px solid #007BFF; margin-bottom: 20px; }
+</style>
+""", unsafe_allow_html=True)
 
 # --- FUNÇÕES AUXILIARES ---
 def get_weather(city):
@@ -33,11 +75,7 @@ def get_brasilia_time():
     return datetime.now(tz)
 
 # --- SETUP IA ---
-if "OPENAI_API_KEY" in st.secrets:
-    client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-else:
-    st.error("Configure sua API Key nos Secrets do Streamlit.")
-    st.stop()
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 # --- INTERFACE ---
 st.title("📍 NomadAI Pro")
@@ -75,7 +113,6 @@ if st.button("Gerar Roteiro"):
     if not cidade:
         st.warning("Por favor, informe a cidade.")
     else:
-        # Lógica de Paywall
         is_premium = (tipo_roteiro == "Planejamento de Vários Dias") or (tipo_roteiro == "Roteiro Rápido (Hoje)" and duracao > 6)
         liberado = (cupom.lower() == "tripfree") if cupom else not is_premium
 
@@ -88,27 +125,27 @@ if st.button("Gerar Roteiro"):
             </div>
             """, unsafe_allow_html=True)
             st.link_button("💳 Desbloquear agora", "https://seu-link-de-pagamento.com")
+
         else:
             with st.spinner('Planejando...'):
                 clima = get_weather(cidade)
                 prompt_text = f"Cidade: {cidade}. Duração: {duracao} {unidade}. Clima: {clima}. Grupo: {grupo}. Pet: {pet}. Vibe: {vibe}. Pedidos: {pedidos}. Começando às {hora_atual}."
-                
-                try:
-                    completion = client.chat.completions.create(
-                        model="gpt-4o-mini",
-                        messages=[
-                            {"role": "system", "content": "Você é um guia profissional."},
-                            {"role": "user", "content": prompt_text}
-                        ]
-                    )
-                    resposta = completion.choices[0].message.content
-                    st.success("Pronto!")
-                    st.info(f"☀️ {clima} | 🕒 {hora_atual}")
-                    st.markdown(resposta)
-                    
-                    link_wa = f"https://api.whatsapp.com/send?text={urllib.parse.quote(resposta[:500])}"
-                    st.link_button("📲 Enviar para WhatsApp", link_wa)
-                except Exception as e:
-                    st.error(f"Erro: {e}")
 
-st.markdown("<br><hr><center><small>NomadAI Pro v1.8</small></center>", unsafe_allow_html=True)
+                completion = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "Você é um guia logístico especialista em viagens, evitando roubadas e sugerindo opções seguras e compatíveis com o veículo."},
+                        {"role": "user", "content": prompt_text}
+                    ]
+                )
+
+                resposta = completion.choices[0].message.content
+
+                st.success("Pronto!")
+                st.info(f"☀️ {clima} | 🕒 {hora_atual}")
+                st.markdown(resposta)
+
+                link_wa = f"https://api.whatsapp.com/send?text={urllib.parse.quote(resposta[:500])}"
+                st.link_button("📲 Enviar para WhatsApp", link_wa)
+
+st.markdown("<br><hr><center><small>NomadAI Pro v2.0</small></center>", unsafe_allow_html=True)
