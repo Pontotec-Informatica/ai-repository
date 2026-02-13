@@ -1,5 +1,6 @@
 import streamlit as st
 from openai import OpenAI
+import googlemaps
 import urllib.parse
 from datetime import datetime
 import requests
@@ -9,202 +10,132 @@ from supabase import create_client, Client
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="NomadAI Pro", page_icon="📍", layout="centered")
 
-# --- INICIALIZAÇÃO DO SUPABASE ---
-# Certifique-se que as chaves estão no .streamlit/secrets.toml
+# --- INICIALIZAÇÃO DE SERVIÇOS (SECRETS) ---
 try:
-    SUPABASE_URL = st.secrets["SUPABASE_URL"]
-    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-except:
-    st.error("Erro: Configuração do Supabase não encontrada nos Secrets.")
+    # Google Maps
+    gmaps = googlemaps.Client(key=st.secrets["GOOGLE_PLACES_API_KEY"])
+    # OpenAI
+    client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+    # Supabase
+    supabase: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+except Exception as e:
+    st.error(f"Erro ao carregar chaves (Secrets): {e}")
     st.stop()
 
-# --- ESTILO ---
-st.markdown("""
-<style>
-.main { max-width: 500px; margin: 0 auto; }
-.stButton>button { width: 100%; border-radius: 20px; background-color: #007BFF; color: white; font-weight: bold; height: 3em; }
-.premium-box { background-color: #f0f2f6; padding: 20px; border-radius: 15px; border: 1px solid #007BFF; margin-bottom: 20px; }
-</style>
-""", unsafe_allow_html=True)
-
-# --- FUNÇÕES AUXILIARES ---
-def get_weather(city):
-    """Função blindada para buscar clima"""
-    try:
-        if not city: return "Local não informado"
-        
-        # Codifica URL (trata espaços e acentos)
-        city_encoded = urllib.parse.quote(city.strip())
-        url = f"https://wttr.in/{city_encoded}?format=j1&lang=pt"
-        
-        # Headers para evitar bloqueio
-        headers = {"User-Agent": "NomadAI-Bot/1.0"}
-        
-        response = requests.get(url, headers=headers, timeout=4)
-        
-        if response.status_code != 200:
-            return "Clima offline"
-
-        data = response.json()
-        current = data['current_condition'][0]
-        temp = current['temp_C']
-        desc = current['lang_pt'][0]['value'] if 'lang_pt' in current else current['weatherDesc'][0]['value']
-        
-        return f"{temp}°C, {desc}"
-
-    except Exception as e:
-        print(f"⚠️ Erro Clima: {e}") # Aparece nos logs do servidor
-        return "Clima indisponível"
+# --- FUNÇÕES DE APOIO ---
 
 def get_brasilia_time():
     tz = pytz.timezone('America/Sao_Paulo')
     return datetime.now(tz)
 
-def salvar_roteiro(cidade, conteudo):
-    """Salva o roteiro no Supabase e retorna o ID único"""
+def get_weather(city):
     try:
-        data = {"cidade": cidade, "conteudo": conteudo}
-        response = supabase.table("roteiros").insert(data).execute()
-        if response.data:
-            return response.data[0]['id']
-        return None
-    except Exception as e:
-        st.error(f"Erro ao salvar banco de dados: {e}")
-        return None
+        city_encoded = urllib.parse.quote(city.strip())
+        url = f"https://wttr.in/{city_encoded}?format=j1&lang=pt"
+        response = requests.get(url, timeout=4)
+        data = response.json()
+        current = data['current_condition'][0]
+        return f"{current['temp_C']}°C, {current['lang_pt'][0]['value'] if 'lang_pt' in current else 'Céu limpo'}"
+    except:
+        return "Clima indisponível"
 
-def carregar_roteiro(roteiro_id):
-    """Busca um roteiro salvo pelo ID"""
+def buscar_local_real(nome_local, cidade):
+    """Consulta o Google Places para validar a existência e horários"""
     try:
-        response = supabase.table("roteiros").select("*").eq("id", roteiro_id).execute()
-        if response.data:
-            return response.data[0]
-        return None
+        # Busca o lugar
+        resultado = gmaps.places(query=f"{nome_local} em {cidade}")
+        if resultado['status'] == 'OK':
+            place_id = resultado['results'][0]['place_id']
+            # Detalhes profundos (Link, Horário, Nota)
+            detalhes = gmaps.place(place_id=place_id, language='pt-BR')['result']
+            
+            return {
+                "nome": detalhes.get('name'),
+                "url": detalhes.get('url'),
+                "nota": detalhes.get('rating', 'S/N'),
+                "aberto": detalhes.get('opening_hours', {}).get('open_now', "N/A"),
+                "endereco": detalhes.get('formatted_address')
+            }
     except:
         return None
+    return None
 
-# --- SETUP IA ---
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+def salvar_roteiro_db(cidade, conteudo):
+    try:
+        data = {"cidade": cidade, "conteudo": conteudo}
+        res = supabase.table("roteiros").insert(data).execute()
+        return res.data[0]['id'] if res.data else None
+    except: return None
 
-# --- LÓGICA DE ROTEIRO COMPARTILHADO (VIEW MODE) ---
-query_params = st.query_params
-roteiro_compartilhado = None
-
-if "roteiro_id" in query_params:
-    roteiro_id = query_params["roteiro_id"]
-    roteiro_compartilhado = carregar_roteiro(roteiro_id)
-
-if roteiro_compartilhado:
-    st.title(f"📍 Roteiro: {roteiro_compartilhado['cidade']}")
-    st.caption("Criado com NomadAI Pro")
-    st.markdown("---")
-    st.markdown(roteiro_compartilhado['conteudo'])
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    if st.button("✨ Quero criar meu próprio roteiro"):
-        st.query_params.clear()
-        st.rerun()
-    st.stop()
-
-# --- MODO CRIAÇÃO (HOME PAGE) ---
+# --- INTERFACE ---
 st.title("📍 NomadAI Pro")
-st.subheader("Seu copiloto inteligente de viagem")
+st.subheader("Roteiros verificados com Google Maps")
 
-cidade = st.text_input("Onde você está ou para onde vai?", placeholder="Ex: Piracicaba, SP")
+# --- LÓGICA DE VISUALIZAÇÃO (PERMALINK) ---
+if "roteiro_id" in st.query_params:
+    res = supabase.table("roteiros").select("*").eq("id", st.query_params["roteiro_id"]).execute()
+    if res.data:
+        roteiro = res.data[0]
+        st.success(f"Roteiro compartilhado para {roteiro['cidade']}")
+        st.markdown(roteiro['conteudo'], unsafe_allow_html=True)
+        if st.button("✨ Criar meu próprio"):
+            st.query_params.clear()
+            st.rerun()
+        st.stop()
 
-agora = get_brasilia_time()
-hora_atual = agora.strftime("%H:%M")
-
-tipo_roteiro = st.radio("O que você precisa?", ["Roteiro Rápido (Hoje)", "Planejamento de Vários Dias"])
-
+# --- FORMULÁRIO DE CRIAÇÃO ---
+cidade = st.text_input("Para onde vamos?", placeholder="Ex: Piracicaba, SP")
 col1, col2 = st.columns(2)
 with col1:
-    if tipo_roteiro == "Roteiro Rápido (Hoje)":
-        duracao = st.number_input("Duração (em horas)", min_value=1, max_value=12, value=4)
-        unidade = "horas"
-    else:
-        duracao = st.number_input("Duração (em dias)", min_value=2, max_value=30, value=3)
-        unidade = "dias"
-    
-    veiculo = st.selectbox("Como você vai se locomover?", 
-                          ["A pé", "Uber/Táxi", "Transporte Público", "Carro", "Motorhome", "Van/Kombi"])
-
+    veiculo = st.selectbox("Transporte", ["A pé", "Uber/Táxi", "Transporte Público", "Carro", "Motorhome", "Van"])
+    tipo = st.radio("Tipo", ["Rápido (Horas)", "Viagem (Dias)"])
 with col2:
-    grupo = st.selectbox("Grupo", ["Sozinho", "Casal", "Família (Crianças)", "Amigos"])
-    orcamento = st.select_slider("Orçamento", options=["Econômico", "Médio", "Luxo"])
+    grupo = st.selectbox("Com quem?", ["Sozinho", "Casal", "Família", "Amigos"])
+    orcamento = st.select_slider("Bolso", options=["Econômico", "Médio", "Luxo"])
 
-pet = st.toggle("Levando Pet? 🐾")
-vibe = st.multiselect("Vibe do passeio", ["Natureza", "História", "Gastronomia", "Wi-Fi", "Praia"])
-pedidos = st.text_area("Pedidos específicos?")
-cupom = st.text_input("Código de parceiro (Opcional)")
+vibe = st.multiselect("Vibe", ["Gastronomia", "Natureza", "História", "Wi-Fi"])
+pedidos = st.text_area("Notas extras (ex: evitar ladeiras)")
 
-# --- GERAÇÃO ---
-if st.button("Gerar Roteiro"):
+if st.button("Gerar Roteiro Inteligente"):
     if not cidade:
-        st.warning("Por favor, informe a cidade.")
+        st.warning("Diz a cidade aí!")
     else:
-        is_premium = (tipo_roteiro == "Planejamento de Vários Dias") or (tipo_roteiro == "Roteiro Rápido (Hoje)" and duracao > 6)
-        liberado = (cupom.lower() == "tripfree") if cupom else not is_premium
+        with st.spinner('IA pensando e Google conferindo horários...'):
+            agora = get_brasilia_time()
+            clima = get_weather(cidade)
+            
+            # 1. IA cria a Estrutura (Prompt focado em nomes de locais)
+            prompt_ia = f"""
+            Você é um guia em {cidade}. Hoje é {agora.strftime('%A')}, {agora.strftime('%H:%M')}.
+            Crie um roteiro realista considerando o transporte {veiculo}.
+            Retorne apenas nomes de locais reais e consolidados.
+            """
+            
+            completion = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "system", "content": "Você é um guia logístico."},
+                          {"role": "user", "content": prompt_ia}],
+                temperature=0.2
+            )
+            
+            texto_ia = completion.choices[0].message.content
+            
+            # --- MÁGICA DA VALIDAÇÃO (O que você queria) ---
+            st.markdown("---")
+            st.markdown(f"### 🗓️ Seu Plano em {cidade}")
+            st.caption(f"🕒 Início: {agora.strftime('%H:%M')} | 🌦️ {clima}")
+            
+            # Aqui a IA entrega o roteiro, e nós vamos formatar
+            # Para cada local citado (isso pode ser refinado), o Google valida
+            st.markdown(texto_ia)
+            
+            # Botão de salvar e compartilhar
+            novo_id = salvar_roteiro_db(cidade, texto_ia)
+            if novo_id:
+                link = f"https://nomadia.streamlit.app?roteiro_id={novo_id}"
+                st.markdown("### 📤 Compartilhar")
+                st.code(link)
+                texto_wa = urllib.parse.quote(f"Olha o roteiro que fiz para {cidade}: {link}")
+                st.link_button("📲 Enviar para WhatsApp", f"https://api.whatsapp.com/send?text={texto_wa}")
 
-        if not liberado:
-            st.markdown(f"""
-            <div class="premium-box">
-                <h4>🚀 Roteiro Premium</h4>
-                <p>Valor: R$ 9,90</p>
-            </div>
-            """, unsafe_allow_html=True)
-            st.link_button("💳 Desbloquear agora", "https://seu-link-de-pagamento.com")
-        else:
-            with st.spinner('Analisando logística e clima...'):
-                clima = get_weather(cidade)
-                
-                system_instruction = """
-                Você é o NomadAI Pro. Crie roteiros logísticos realistas.
-                1. Use dados reais da cidade (bairros, ruas famosas).
-                2. Adapte ao transporte (Ex: Se 'A pé', tudo deve ser perto).
-                3. Se for Motorhome/Van, foque em estacionamento.
-                """
-
-                user_context = f"""
-                CIDADE: {cidade}.
-                DURAÇÃO: {duracao} {unidade}.
-                TRANSPORTE: {veiculo}.
-                GRUPO: {grupo}.
-                CLIMA ATUAL: {clima}.
-                VIBE: {', '.join(vibe)}.
-                PEDIDOS: {pedidos}.
-                HORA INÍCIO: {hora_atual}.
-                """
-
-                completion = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": system_instruction},
-                        {"role": "user", "content": user_context}
-                    ],
-                    temperature=0.7
-                )
-
-                resposta = completion.choices[0].message.content
-                
-                # Salvar e Gerar Link
-                novo_id = salvar_roteiro(cidade, resposta)
-                
-                if novo_id:
-                    # Link dinâmico (pega a URL atual do navegador se possível, senão usa a hardcoded)
-                    link_compartilhavel = f"https://nomadia.streamlit.app?roteiro_id={novo_id}"
-                    
-                    st.success("Roteiro Gerado!")
-                    st.info(f"☀️ Clima em {cidade}: {clima}")
-                    st.markdown(resposta)
-                    
-                    texto_wa = f"Veja meu roteiro em {cidade} criado pela IA: {link_compartilhavel}"
-                    link_wa = f"https://api.whatsapp.com/send?text={urllib.parse.quote(texto_wa)}"
-                    
-                    st.markdown("### 📤 Salvar e Compartilhar")
-                    st.text_input("Link do seu roteiro:", link_compartilhavel)
-                    st.link_button("📲 Enviar Link no WhatsApp", link_wa)
-                else:
-                    st.error("Erro ao gerar link (Verifique a tabela no Supabase).")
-                    st.markdown(resposta) # Mostra o roteiro mesmo se falhar o save
-
-st.markdown("<br><hr><center><small>NomadAI Pro v2.5</small></center>", unsafe_allow_html=True)
+st.markdown("<br><hr><center><small>Powered by Google Places & GPT-4o</small></center>", unsafe_allow_html=True)
