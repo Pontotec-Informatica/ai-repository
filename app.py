@@ -3,7 +3,7 @@ from supabase import create_client, Client
 from openai import OpenAI
 
 # ---------------------------------------------------
-# CONFIGURAÇÃO DA PÁGINA
+# CONFIGURAÇÃO
 # ---------------------------------------------------
 st.set_page_config(
     page_title="NomadAI",
@@ -11,18 +11,23 @@ st.set_page_config(
     layout="wide"
 )
 
-# ---------------------------------------------------
-# SECRETS (Streamlit Cloud)
-# ---------------------------------------------------
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
 OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
 
-# ---------------------------------------------------
-# CLIENTES
-# ---------------------------------------------------
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
+
+# ---------------------------------------------------
+# FUNÇÃO REDIRECT (ESSENCIAL NO STREAMLIT)
+# ---------------------------------------------------
+def redirect(url: str):
+    st.markdown(
+        f"""
+        <meta http-equiv="refresh" content="0; url={url}">
+        """,
+        unsafe_allow_html=True,
+    )
 
 # ---------------------------------------------------
 # HEADER
@@ -36,22 +41,23 @@ st.caption("Roteiros inteligentes para viajantes e hosts")
 session = supabase.auth.get_session()
 
 # ---------------------------------------------------
-# TELA DE LOGIN
+# LOGIN
 # ---------------------------------------------------
 if not session or not session.session:
 
-    st.markdown("### 🚐 Entre para gerar roteiros inteligentes")
+    st.markdown("### 🚐 Entre para usar o NomadAI")
 
-    col1, col2, col3 = st.columns([1,2,1])
+    if st.button("🔐 Entrar com Google", use_container_width=True):
 
-    with col2:
-        if st.button("🔐 Entrar com Google", use_container_width=True):
-            supabase.auth.sign_in_with_oauth({
-                "provider": "google",
-                "options": {
-                    "redirect_to": "https://nomadia.streamlit.app"
-                }
-            })
+        data = supabase.auth.sign_in_with_oauth({
+            "provider": "google",
+            "options": {
+                "redirect_to": "https://nomadia.streamlit.app"
+            }
+        })
+
+        # 🔥 AQUI ESTAVA O PROBLEMA
+        redirect(data.url)
 
     st.stop()
 
@@ -60,12 +66,12 @@ if not session or not session.session:
 # ---------------------------------------------------
 user_email = session.session.user.email
 
-colA, colB = st.columns([4,1])
+col1, col2 = st.columns([4,1])
 
-with colA:
-    st.success(f"✅ Logado como: {user_email}")
+with col1:
+    st.success(f"✅ Logado como {user_email}")
 
-with colB:
+with col2:
     if st.button("Sair"):
         supabase.auth.sign_out()
         st.rerun()
@@ -73,16 +79,16 @@ with colB:
 st.divider()
 
 # ---------------------------------------------------
-# FORMULÁRIO NOMADAI
+# FORM NOMADAI
 # ---------------------------------------------------
-st.subheader("✨ Criar roteiro agora")
+st.subheader("✨ Criar roteiro")
 
 col1, col2 = st.columns(2)
 
 with col1:
-    localizacao = st.text_input("📍 Localização atual")
+    localizacao = st.text_input("📍 Localização")
     vibe = st.selectbox(
-        "🌴 Vibe da viagem",
+        "🌴 Vibe",
         ["Relax", "Aventura", "Gastronomia", "Natureza", "Romântico"]
     )
 
@@ -93,49 +99,46 @@ with col2:
     )
 
     veiculo = st.selectbox(
-        "🚐 Tipo de veículo",
+        "🚐 Veículo",
         ["Carro", "Motorhome", "Van Camper", "Mochileiro"]
     )
 
 gerar = st.button("⚡ Gerar roteiro")
 
 # ---------------------------------------------------
-# CHAMADA OPENAI
+# IA
 # ---------------------------------------------------
 if gerar and localizacao:
 
-    with st.spinner("Planejando experiência..."):
+    with st.spinner("Planejando..."):
 
         prompt = f"""
-Você é um especialista em viagens on-the-go.
+Você é especialista em viagens on-the-go.
 
-Crie um roteiro imediato para:
-Localização: {localizacao}
+Local: {localizacao}
 Vibe: {vibe}
 Orçamento: {orcamento}
 Veículo: {veiculo}
 
-REGRAS IMPORTANTES:
-- Evitar locais perigosos ou inviáveis logisticamente
-- Se for motorhome ou van, sugerir estacionamento possível
-- Priorizar custo compatível com orçamento
-- Sugerir atividades próximas (até 20km)
-- Resposta prática e objetiva
+Regras:
+- Evitar roubadas logísticas
+- Motorhome precisa estacionamento seguro
+- Sugestões até 20km
+- Objetivo e prático
 """
 
         response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Você cria roteiros inteligentes e seguros."},
+                {"role": "system", "content": "Guia especialista em logística de viagem."},
                 {"role": "user", "content": prompt}
-            ],
-            temperature=0.7
+            ]
         )
 
         roteiro = response.choices[0].message.content
 
-        st.markdown("## 🗺️ Seu roteiro agora")
+        st.markdown("## 🗺️ Seu roteiro")
         st.write(roteiro)
 
 elif gerar:
-    st.warning("Informe a localização primeiro.")
+    st.warning("Informe a localização.")
