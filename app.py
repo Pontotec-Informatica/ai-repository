@@ -82,31 +82,3 @@ if st.button("Gerar Roteiro"):
         liberado = True if (cupom and cupom.lower() == "tripfree") else not is_premium
 
         if not liberado:
-            st.markdown(f"""
-            <div class="premium-box">
-                <h4>🚀 Roteiro Premium Detectado</h4>
-                <p>Planejamentos de <b>{duracao} {unidade}</b> exigem mais processamento logístico.</p>
-                <p><b>Valor: R$ 9,90</b></p>
-            </div>
-            """, unsafe_allow_html=True)
-            st.link_button("💳 Desbloquear agora no Stripe", "https://seu-link-de-pagamento-aqui.com")
-            st.info("Dica: Use o cupom 'tripfree' para testar a liberação agora.")
-        else:
-            with st.spinner('Consultando clima e logística...'):
-                clima = get_weather(cidade)
-                
-                prompt = f"""
-                Gere um roteiro detalhado para {cidade}.
-                DURAÇÃO: {duracao} {unidade}.
-                INÍCIO: {hora_atual if unidade == 'horas' else 'Manhã do dia 1'}.
-                CLIMA ATUAL: {clima}.
-                PERFIL: Veículo {veiculo}, Grupo {grupo}, Pet {pet}, Orçamento {orcamento}.
-                VIBE: {vibe}. Pedidos: {pedidos}.
-                REGRAS: Divida por horários ou dias. Se chover, locais fechados. Formate com Markdown e emojis.
-                """
-                
-                try:
-                    completion = client.chat.completions.create(
-                        model="gpt-4o-mini",
-                        messages=[
-                            {"role": "system", "
