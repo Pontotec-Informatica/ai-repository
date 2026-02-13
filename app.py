@@ -66,11 +66,9 @@ with col2:
     orcamento = st.select_slider("Orçamento", options=["Econômico", "Médio", "Luxo"])
 
 pet = st.toggle("Levando Pet? 🐾")
-vibe = st.multiselect("Vibe do passeio", ["Natureza", "História/Cultura", "Gastronomia", "Trabalho/Wi-Fi", "Praia"])
+vibe = st.multiselect("Vibe do passeio", ["Natureza", "História", "Gastronomia", "Wi-Fi", "Praia"])
 pedidos = st.text_area("Pedidos específicos?")
-
-# --- CAMPO DE CUPOM ---
-cupom = st.text_input("Possui código de parceiro/pousada? (Opcional)")
+cupom = st.text_input("Código de parceiro (Opcional)")
 
 # --- LÓGICA DE PROCESSAMENTO ---
 if st.button("Gerar Roteiro"):
@@ -78,7 +76,39 @@ if st.button("Gerar Roteiro"):
         st.warning("Por favor, informe a cidade.")
     else:
         # Lógica de Paywall
-        is_premium = tipo_roteiro == "Planejamento de Vários Dias" or (tipo_roteiro == "Roteiro Rápido (Hoje)" and duracao > 6)
-        liberado = True if (cupom and cupom.lower() == "tripfree") else not is_premium
+        is_premium = (tipo_roteiro == "Planejamento de Vários Dias") or (tipo_roteiro == "Roteiro Rápido (Hoje)" and duracao > 6)
+        liberado = (cupom.lower() == "tripfree") if cupom else not is_premium
 
         if not liberado:
+            st.markdown(f"""
+            <div class="premium-box">
+                <h4>🚀 Roteiro Premium</h4>
+                <p>Planos de {duracao} {unidade} exigem curadoria profunda.</p>
+                <p><b>Valor: R$ 9,90</b></p>
+            </div>
+            """, unsafe_allow_html=True)
+            st.link_button("💳 Desbloquear agora", "https://seu-link-de-pagamento.com")
+        else:
+            with st.spinner('Planejando...'):
+                clima = get_weather(cidade)
+                prompt_text = f"Cidade: {cidade}. Duração: {duracao} {unidade}. Clima: {clima}. Grupo: {grupo}. Pet: {pet}. Vibe: {vibe}. Pedidos: {pedidos}. Começando às {hora_atual}."
+                
+                try:
+                    completion = client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[
+                            {"role": "system", "content": "Você é um guia profissional."},
+                            {"role": "user", "content": prompt_text}
+                        ]
+                    )
+                    resposta = completion.choices[0].message.content
+                    st.success("Pronto!")
+                    st.info(f"☀️ {clima} | 🕒 {hora_atual}")
+                    st.markdown(resposta)
+                    
+                    link_wa = f"https://api.whatsapp.com/send?text={urllib.parse.quote(resposta[:500])}"
+                    st.link_button("📲 Enviar para WhatsApp", link_wa)
+                except Exception as e:
+                    st.error(f"Erro: {e}")
+
+st.markdown("<br><hr><center><small>NomadAI Pro v1.8</small></center>", unsafe_allow_html=True)
