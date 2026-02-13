@@ -33,8 +33,11 @@ if "user" not in st.session_state:
 
     if st.button("🔵 Entrar com Google"):
         auth_url = supabase.auth.sign_in_with_oauth({
-            "provider": "google",
-        })
+    "provider": "google",
+    "options": {
+        "redirect_to": "https://nomadai.streamlit.app"
+    }
+})
         st.link_button("👉 Clique aqui para fazer login", auth_url.url)
 
     st.stop()
@@ -149,3 +152,4 @@ if st.button("Gerar Roteiro"):
                 st.link_button("📲 Enviar para WhatsApp", link_wa)
 
 st.markdown("<br><hr><center><small>NomadAI Pro v2.0</small></center>", unsafe_allow_html=True)
+
