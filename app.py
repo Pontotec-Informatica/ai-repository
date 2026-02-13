@@ -9,6 +9,9 @@ from supabase import create_client, Client
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="NomadAI Pro", page_icon="📍", layout="centered")
 
+# Remoção Login para teste
+
+"""
 # -------------------------
 # INICIALIZAÇÃO SUPABASE
 # -------------------------
@@ -60,6 +63,8 @@ with st.sidebar:
         st.rerun()
     st.divider()
     st.caption("NomadAI Pro v2.1")
+
+"""
 
 # --- ESTILO ---
 st.markdown("""
@@ -158,3 +163,4 @@ if st.button("Gerar Roteiro"):
                 st.link_button("📲 Enviar para WhatsApp", link_wa)
 
 st.markdown("<br><hr><center><small>NomadAI Pro v2.1</small></center>", unsafe_allow_html=True)
+
