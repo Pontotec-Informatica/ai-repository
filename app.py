@@ -17,44 +17,52 @@ try:
     client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
     supabase: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 except Exception as e:
-    st.error("Erro de configuração. Verifique os Secrets.")
+    st.error("Erro de configuração. Verifique as chaves de API nos Secrets.")
     st.stop()
+
+# --- ESTADO DA SESSÃO (MEMÓRIA PARA AJUSTES) ---
+if "historico_roteiro" not in st.session_state:
+    st.session_state.historico_roteiro = None
+if "cidade_atual" not in st.session_state:
+    st.session_state.cidade_atual = ""
 
 # --- FUNÇÕES DE APOIO ---
 def get_brasilia_time():
     tz = pytz.timezone('America/Sao_Paulo')
     return datetime.now(tz)
 
-def get_weather(city):
-    try:
-        url = f"https://wttr.in/{urllib.parse.quote(city)}?format=%t+%C"
-        r = requests.get(url, timeout=5)
-        return r.text if r.status_code == 200 else "Clima disponível no local"
-    except: return "Clima disponível no local"
-
 def buscar_detalhes_google(nome_local, cidade_usuario):
-    """Valida o local e garante que ele pertence à cidade correta."""
+    """Busca local e valida relevância rigorosa (Mínimo 300 avaliações)"""
     try:
+        # Filtro de termos que a IA pode negritar por engano
         blacklist = ['dica', 'bairro', 'duração', 'horário', 'obs', 'nota', 'atenção']
         if nome_local.lower() in blacklist: return None
-        
+
         query = f"{nome_local}, {cidade_usuario}"
         result = gmaps.find_place(
             input=query, input_type="textquery",
-            fields=["name", "formatted_address", "place_id", "types"],
+            fields=["name", "formatted_address", "place_id", "types", "user_ratings_total"],
             language="pt-BR"
         )
         
         if result['status'] == 'OK' and result['candidates']:
             place = result['candidates'][0]
+            
+            # --- FILTRO DE RELEVÂNCIA (300+ AVALIAÇÕES) ---
+            avaliacoes = place.get('user_ratings_total', 0)
+            if avaliacoes < 300: 
+                return None
+
+            # Validação Geográfica
             endereco = place.get('formatted_address', '').lower()
             cidade_alvo = cidade_usuario.split(',')[0].strip().lower()
-
-            # Se o local não for na cidade, o NomadIA Pro ignora para evitar erros
-            if cidade_alvo not in endereco: return None
+            if cidade_alvo not in endereco: 
+                return None
             
+            # Filtro de Categoria (Turismo e Gastronomia)
             permitidos = ['park', 'restaurant', 'food', 'tourist_attraction', 'museum', 'cafe', 'bar', 'shopping_mall', 'point_of_interest']
-            if not any(t in permitidos for t in place.get('types', [])): return None
+            if not any(t in permitidos for t in place.get('types', [])): 
+                return None
 
             url = f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(place['name'])}&query_place_id={place['place_id']}"
             return {"nome": place['name'], "url": url}
@@ -64,109 +72,114 @@ def buscar_detalhes_google(nome_local, cidade_usuario):
 # --- INTERFACE ---
 st.title("📍 NomadIA Pro")
 
-# LÓGICA DE COMPARTILHAMENTO
+# COMPARTILHAMENTO (Permalinks)
 if "roteiro_id" in st.query_params:
     res = supabase.table("roteiros").select("*").eq("id", st.query_params["roteiro_id"]).execute()
     if res.data:
-        st.success(f"Roteiro: {res.data[0]['cidade']}")
+        st.success(f"Roteiro Carregado: {res.data[0]['cidade']}")
         st.markdown(res.data[0]['conteudo'])
-        if st.button("✨ Criar meu próprio"):
+        if st.button("✨ Criar Novo"):
             st.query_params.clear()
             st.rerun()
         st.stop()
 
-# --- FORMULÁRIO COMPLETO (RESTAURADO) ---
-cidade_input = st.text_input("Para onde vamos?", placeholder="Ex: Piracicaba, SP")
-tipo_op = st.radio("Duração:", ["Horas", "Dias"], horizontal=True)
-
-col1, col2 = st.columns(2)
-with col1:
-    duracao_val = st.number_input("Quanto tempo?", 1, 30, 4)
-    unidade = "horas" if tipo_op == "Horas" else "dias"
-    veiculo = st.selectbox("Transporte", ["Carro", "A pé", "Uber/Táxi", "Transporte Público", "Motorhome"])
-
-with col2:
-    grupo = st.selectbox("Com quem?", ["Sozinho", "Casal", "Família", "Amigos"])
-    orcamento = st.select_slider("Orçamento", options=["Econômico", "Médio", "Luxo"])
-
-st.markdown("---")
-col_extra1, col_extra2 = st.columns(2)
-with col_extra1:
+# --- PAINEL DE CONFIGURAÇÃO ---
+with st.expander("⚙️ Configurações da Viagem", expanded=st.session_state.historico_roteiro is None):
+    cidade_input = st.text_input("Para qual cidade?", value=st.session_state.cidade_atual, placeholder="Ex: Piracicaba, SP")
+    tipo_op = st.radio("Duração:", ["Horas", "Dias"], horizontal=True)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        duracao_val = st.number_input("Quanto tempo?", 1, 30, 4)
+        veiculo = st.selectbox("Transporte", ["Carro", "A pé", "Uber/Táxi", "Transporte Público"])
+    with col2:
+        grupo = st.selectbox("Com quem?", ["Sozinho", "Casal", "Família", "Amigos"])
+        orcamento = st.select_slider("Orçamento", options=["Econômico", "Médio", "Luxo"])
+    
     pet_friendly = st.toggle("Levando Pet? 🐾")
-with col_extra2:
-    vibe = st.multiselect("Vibe", ["Gastronomia", "Natureza", "História", "Cultura", "Lazer"])
+    vibe = st.multiselect("Vibe do Roteiro", ["Gastronomia", "Natureza", "História", "Cultura", "Lazer"])
 
-pedidos = st.text_area("Pedidos específicos (Ex: evitar ladeiras, lugares românticos)")
-cupom_input = st.text_input("Cupom de Desconto")
+# --- CAMPO DE AJUSTE DINÂMICO ---
+instrucao_usuario = st.text_area("O que quer ver ou o que deseja ajustar?", 
+                                placeholder="Ex: Sugira um roteiro clássico / Troque o almoço por um lugar de peixe...")
 
-# --- GERAÇÃO DO ROTEIRO ---
-if st.button("Gerar Roteiro NomadIA 🚀"):
+col_btn1, col_btn2 = st.columns(2)
+with col_btn1:
+    btn_gerar = st.button("🚀 Gerar / Ajustar Roteiro")
+with col_btn2:
+    if st.button("🗑️ Limpar e Reiniciar"):
+        st.session_state.historico_roteiro = None
+        st.session_state.cidade_atual = ""
+        st.rerun()
+
+# --- LÓGICA DE GERAÇÃO ---
+if btn_gerar:
     if not cidade_input:
-        st.warning("Informe a cidade.")
+        st.warning("Informe a cidade primeiro.")
     else:
-        is_premium = (tipo_op == "Dias") or (duracao_val > 6)
-        liberado = (cupom_input.lower() == "tripfree") if cupom_input else not is_premium
-        
-        if not liberado:
-            st.error("Roteiros de vários dias ou longos exigem o cupom TRIPFREE.")
-        else:
-            with st.spinner('Validando locais e otimizando logística...'):
-                agora = get_brasilia_time()
-                clima_txt = get_weather(cidade_input)
-                
-                system_instruction = f"""
-                Você é o guia NomadIA Pro especializado em logística.
-                Crie um roteiro de {duracao_val} {unidade} em {cidade_input}.
-                
-                REGRAS RÍGIDAS:
-                1. Mantenha os locais em um raio de 15km do centro de {cidade_input}.
-                2. LOGÍSTICA: Organize os locais em ordem geográfica lógica (proximidade).
-                3. Pet={pet_friendly}: Se True, priorize locais conhecidos como pet friendly.
-                4. Transporte={veiculo}: Considere o tempo de deslocamento.
-                5. Grupo={grupo} e Orçamento={orcamento}.
-                6. Coloque nomes de lugares entre asteriscos duplos (Ex: **Mercado Municipal**).
-                """
+        with st.spinner('Refinando locais populares e otimizando rota...'):
+            st.session_state.cidade_atual = cidade_input
+            agora = get_brasilia_time()
+            
+            # MEMÓRIA: Se já houver roteiro, ele envia como contexto para a IA ajustar
+            contexto_anterior = f"\nESTE É O ROTEIRO ATUAL (Ajuste-o conforme o pedido): \n{st.session_state.historico_roteiro}" if st.session_state.historico_roteiro else ""
+            
+            system_prompt = f"""
+            Você é um guia local expert em {cidade_input}.
+            Sua tarefa é criar ou ajustar um roteiro inteligente.
+            REGRAS DE QUALIDADE:
+            1. Sugira APENAS locais reais, famosos e tradicionais de {cidade_input}.
+            2. Se houver um 'ROTEIRO ATUAL', mantenha as partes boas e mude apenas o que o usuário solicitou.
+            3. LOGÍSTICA: Organize os locais por proximidade geográfica para evitar deslocamentos inúteis.
+            4. FORMATO: Coloque o nome dos locais em negrito (Ex: **Mercado Municipal**).
+            """
 
-                completion = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[{"role": "system", "content": system_instruction}, 
-                              {"role": "user", "content": f"Foco: {vibe}. Pedidos: {pedidos}"}],
-                    temperature=0.3
-                )
-                
-                texto_original = completion.choices[0].message.content
-                locais_extraidos = re.findall(r"\*\*(.*?)\*\*", texto_original)
-                
-                # FILTRO DE QUALIDADE: Apaga linhas de locais não encontrados/distantes
-                roteiro_limpo = texto_original
-                for loc in set(locais_extraidos):
-                    info_g = buscar_detalhes_google(loc, cidade_input)
-                    if info_g:
-                        roteiro_limpo = roteiro_limpo.replace(f"**{loc}**", f"**{loc}** [📍]({info_g['url']})")
-                    else:
-                        linhas = roteiro_limpo.split('\n')
-                        roteiro_limpo = '\n'.join([l for l in linhas if f"**{loc}**" not in l])
+            prompt_usuario = f"""
+            Pedido do Usuário: {instrucao_usuario}
+            Parâmetros: {duracao_val} {tipo_op}, Transporte: {veiculo}, Grupo: {grupo}, Orçamento: {orcamento}, Pet: {pet_friendly}, Vibe: {vibe}.
+            {contexto_anterior}
+            """
 
-                # EXIBIÇÃO
-                st.markdown("---")
-                st.info(f"🌦️ {clima_txt} | 🕒 Início: {agora.strftime('%H:%M')}")
-                st.markdown(roteiro_limpo)
+            completion = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt_usuario}],
+                temperature=0.3
+            )
+            
+            texto_ia = completion.choices[0].message.content
+            locais_ext = re.findall(r"\*\*(.*?)\*\*", texto_ia)
+            
+            # FILTRO DE QUALIDADE (Mínimo 300 avaliações)
+            roteiro_final = texto_ia
+            for loc in set(locais_ext):
+                info = buscar_detalhes_google(loc, cidade_input)
+                if info:
+                    roteiro_final = roteiro_final.replace(f"**{loc}**", f"**{loc}** [📍]({info['url']})")
+                else:
+                    # Se não for validado (longe ou pouca avaliação), removemos a sugestão para manter o padrão PRO
+                    linhas = roteiro_final.split('\n')
+                    roteiro_final = '\n'.join([l for l in linhas if f"**{loc}**" not in l])
 
-                # OPÇÕES EXTRAS
-                st.markdown("---")
-                col_f1, col_f2 = st.columns(2)
-                with col_f1:
-                    city_q = urllib.parse.quote(f"Melhores lugares em {cidade_input} TripAdvisor")
-                    st.link_button("🌐 Ver no TripAdvisor", f"https://www.google.com/search?q={city_q}")
-                with col_f2:
-                    if st.button("🔄 Ajustar este Roteiro"): st.rerun()
+            st.session_state.historico_roteiro = roteiro_final
+            st.rerun()
 
-                # SALVAMENTO
-                try:
-                    res = supabase.table("roteiros").insert({"cidade": cidade_input, "conteudo": roteiro_limpo}).execute()
-                    link_share = f"https://nomadia.streamlit.app?roteiro_id={res.data[0]['id']}"
-                    st.code(link_share)
-                    st.link_button("📲 Enviar WhatsApp", f"https://api.whatsapp.com/send?text={urllib.parse.quote(link_share)}")
-                except: pass
+# --- EXIBIÇÃO DO ROTEIRO ---
+if st.session_state.historico_roteiro:
+    st.markdown("---")
+    st.markdown(st.session_state.historico_roteiro)
+    
+    # Compartilhamento e TripAdvisor
+    st.markdown("---")
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        q_trip = urllib.parse.quote(f"Melhores coisas para fazer em {st.session_state.cidade_atual} TripAdvisor")
+        st.link_button("🌐 Pesquisar no TripAdvisor", f"https://www.google.com/search?q={q_trip}")
+    
+    with col_f2:
+        try:
+            res_db = supabase.table("roteiros").insert({"cidade": st.session_state.cidade_atual, "conteudo": st.session_state.historico_roteiro}).execute()
+            link_sh = f"https://nomadia.streamlit.app?roteiro_id={res_db.data[0]['id']}"
+            st.link_button("📲 Enviar WhatsApp", f"https://api.whatsapp.com/send?text={urllib.parse.quote(link_sh)}")
+        except: pass
 
-st.markdown("<br><hr><center><small>NomadIA Pro v3.0</small></center>", unsafe_allow_html=True)
+st.markdown("<br><hr><center><small>NomadIA Pro v4.0 | Filtro de Qualidade 300+ Avaliações</small></center>", unsafe_allow_html=True)
