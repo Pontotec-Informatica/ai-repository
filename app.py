@@ -10,61 +10,56 @@ from supabase import create_client, Client
 st.set_page_config(page_title="NomadAI Pro", page_icon="📍", layout="centered")
 
 # -------------------------
-# SUPABASE LOGIN
+# INICIALIZAÇÃO SUPABASE
 # -------------------------
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
-
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# ---------------------------------------------------
-# CORREÇÃO LOGIN SUPABASE
-# ---------------------------------------------------
-
-# tenta recuperar sessão existente
-session = supabase.auth.get_session()
-
-if session and session.session:
-    st.session_state["user"] = session.session.user.email
-
-session = supabase.auth.get_session()
-
-if not session or not session.session:
-    session = supabase.auth.refresh_session()
-
-if session and session.session:
-    st.session_state["user"] = session.session.user.email
-
-# ---------------------------------------------------
-
-# --- TELA DE LOGIN ---
+# Lógica de Sessão Segura
 if "user" not in st.session_state:
+    st.session_state["user"] = None
 
+# Tenta recuperar a sessão do Supabase sem quebrar
+try:
+    # get_session() verifica se o usuário já está logado ou se há um token na URL
+    res = supabase.auth.get_session()
+    if res and res.session:
+        st.session_state["user"] = res.session.user.email
+except Exception:
+    # Se não houver sessão, apenas ignoramos e seguimos para a tela de login
+    pass
+
+# --- TELA DE LOGIN (SÓ APARECE SE NÃO ESTIVER LOGADO) ---
+if st.session_state["user"] is None:
     st.title("🚐 NomadAI")
     st.subheader("Seu copiloto inteligente de viagem")
-
     st.markdown("Entre para gerar roteiros personalizados.")
 
     if st.button("🔵 Entrar com Google"):
-        auth_url = supabase.auth.sign_in_with_oauth({
-    "provider": "google",
-    "options": {
-        "redirect_to": "https://nomadai.streamlit.app"
-    }
-})
-        st.link_button("👉 Clique aqui para fazer login", auth_url.url)
-
+        # O Supabase gera a URL de redirecionamento
+        auth_data = supabase.auth.sign_in_with_oauth({
+            "provider": "google",
+            "options": {
+                "redirect_to": "https://nomadia.streamlit.app"
+            }
+        })
+        # Em vez de st.link_button, usamos um redirect direto se possível ou instruímos o clique
+        st.markdown(f'<meta http-equiv="refresh" content="0;URL=\'{auth_data.url}\'" />', unsafe_allow_html=True)
+        st.info("Redirecionando para o Google...")
     st.stop()
 
 # -------------------------
-# USUÁRIO LOGADO
+# USUÁRIO LOGADO - MENU LATERAL
 # -------------------------
-st.sidebar.success(f"✅ Logado como\n{st.session_state['user']}")
-
-if st.sidebar.button("Sair"):
-    supabase.auth.sign_out()
-    st.session_state.clear()
-    st.rerun()
+with st.sidebar:
+    st.success(f"✅ Logado como:\n{st.session_state['user']}")
+    if st.button("Sair"):
+        supabase.auth.sign_out()
+        st.session_state["user"] = None
+        st.rerun()
+    st.divider()
+    st.caption("NomadAI Pro v2.1")
 
 # --- ESTILO ---
 st.markdown("""
@@ -94,9 +89,8 @@ def get_brasilia_time():
 # --- SETUP IA ---
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-# --- INTERFACE ---
+# --- INTERFACE PRINCIPAL ---
 st.title("📍 NomadAI Pro")
-st.subheader("Seu guia logístico inteligente")
 
 cidade = st.text_input("Onde você está ou para onde vai?", placeholder="Ex: Paraty, RJ")
 
@@ -125,7 +119,7 @@ vibe = st.multiselect("Vibe do passeio", ["Natureza", "História", "Gastronomia"
 pedidos = st.text_area("Pedidos específicos?")
 cupom = st.text_input("Código de parceiro (Opcional)")
 
-# --- LÓGICA DE PROCESSAMENTO ---
+# --- LÓGICA DE GERAÇÃO ---
 if st.button("Gerar Roteiro"):
     if not cidade:
         st.warning("Por favor, informe a cidade.")
@@ -142,30 +136,25 @@ if st.button("Gerar Roteiro"):
             </div>
             """, unsafe_allow_html=True)
             st.link_button("💳 Desbloquear agora", "https://seu-link-de-pagamento.com")
-
         else:
-            with st.spinner('Planejando...'):
+            with st.spinner('Planejando seu roteiro...'):
                 clima = get_weather(cidade)
                 prompt_text = f"Cidade: {cidade}. Duração: {duracao} {unidade}. Clima: {clima}. Grupo: {grupo}. Pet: {pet}. Vibe: {vibe}. Pedidos: {pedidos}. Começando às {hora_atual}."
 
                 completion = client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": "Você é um guia logístico especialista em viagens, evitando roubadas e sugerindo opções seguras e compatíveis com o veículo."},
+                        {"role": "system", "content": "Você é um guia logístico especialista em viagens."},
                         {"role": "user", "content": prompt_text}
                     ]
                 )
 
                 resposta = completion.choices[0].message.content
-
                 st.success("Pronto!")
                 st.info(f"☀️ {clima} | 🕒 {hora_atual}")
                 st.markdown(resposta)
-
+                
                 link_wa = f"https://api.whatsapp.com/send?text={urllib.parse.quote(resposta[:500])}"
                 st.link_button("📲 Enviar para WhatsApp", link_wa)
 
-st.markdown("<br><hr><center><small>NomadAI Pro v2.0</small></center>", unsafe_allow_html=True)
-
-
-
+st.markdown("<br><hr><center><small>NomadAI Pro v2.1</small></center>", unsafe_allow_html=True)
