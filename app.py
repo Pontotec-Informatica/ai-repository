@@ -1,5 +1,6 @@
 import streamlit as st
 from openai import OpenAI
+import urllib.parse
 
 # Configuração visual do Web App
 st.set_page_config(page_title="SeuGuia AI", page_icon="📍", layout="centered")
@@ -59,4 +60,12 @@ if st.button("Gerar Roteiro Inteligente"):
             st.markdown("---")
             st.markdown(resposta)
 
+# Prepara a repostar para compartilhar no WhatsApp
+texto_share = f"Veja o roteiro que o Travel-AI gerou para {cidade}:\n\n{resposta}"
+link_whatsapp = f"https://api.whatsapp.com/send?text={urllib.parse.quote(texto_share)}"
+
+st.divider()
+st.link_button("📲 Compartilhar no WhatsApp", link_whatsapp)
+
             st.balloons()
+
