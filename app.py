@@ -8,9 +8,15 @@ st.set_page_config(page_title="SeuGuia AI", page_icon="📍", layout="centered")
 st.markdown("""
     <style>
     .main { max-width: 500px; margin: 0 auto; }
-    .stButton>button { width: 100%; border-radius: 20px; height: 3em; background-color: #007BFF; color: white; }
+    .stButton>button { 
+        width: 100%; 
+        border-radius: 20px; 
+        height: 3em; 
+        background-color: #007BFF; 
+        color: white; 
+    }
     </style>
-    """, unsafe_allow_input_ those_tags=True)
+    """, unsafe_allow_html=True)
 
 st.title("📍 Guia Local Inteligente")
 st.caption("Roteiros logísticos para viajantes e motorhomes.")
@@ -52,4 +58,5 @@ if st.button("Gerar Roteiro Inteligente"):
             resposta = completion.choices[0].message.content
             st.markdown("---")
             st.markdown(resposta)
+
             st.balloons()
