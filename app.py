@@ -17,10 +17,10 @@ try:
     client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
     supabase: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 except Exception as e:
-    st.error(f"Erro ao carregar chaves (Secrets): {e}")
+    st.error(f"Erro de configuração: {e}")
     st.stop()
 
-# --- FUNÇÕES AUXILIARES ---
+# --- FUNÇÕES DE APOIO ---
 
 def get_brasilia_time():
     tz = pytz.timezone('America/Sao_Paulo')
@@ -35,157 +35,147 @@ def get_weather(city):
     except:
         return "Clima indisponível"
 
-def buscar_detalhes_google(nome_local, cidade):
-    """Busca o link oficial e detalhes no Google Maps"""
+def buscar_detalhes_google(nome_local, cidade_usuario):
+    """Busca o local com validação rigorosa para evitar links errados (vizinhança)"""
     try:
-        # Busca o lugar especificamente na cidade para evitar erros
-        result = gmaps.places(query=f"{nome_local} em {cidade}")
-        if result['status'] == 'OK':
-            place = result['results'][0]
-            name = place['name']
-            place_id = place['place_id']
-            # Cria o link direto do Google Maps
-            maps_url = f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(name)}&query_place_id={place_id}"
-            return {"nome": name, "url": maps_url}
+        query_completa = f"{nome_local}, {cidade_usuario}"
+        
+        # Uso do find_place para maior precisão
+        result = gmaps.find_place(
+            input=query_completa,
+            input_type="textquery",
+            fields=["name", "formatted_address", "place_id"],
+            language="pt-BR"
+        )
+        
+        if result['status'] == 'OK' and result['candidates']:
+            place = result['candidates'][0]
+            nome_google = place.get('name', '').lower()
+            endereco = place.get('formatted_address', '').lower()
+            cidade_base = cidade_usuario.split(',')[0].strip().lower()
+
+            # VALIDAÇÃO 1: O endereço precisa conter a cidade correta
+            if cidade_base not in endereco:
+                return None
+            
+            # VALIDAÇÃO 2: O nome retornado deve ser minimamente parecido (evita trocar Cervejaria por Igreja)
+            palavras_ia = set(re.findall(r'\w+', nome_local.lower()))
+            palavras_google = set(re.findall(r'\w+', nome_google))
+            
+            # Se não houver nenhuma palavra em comum (com mais de 3 letras), descarta
+            if not any(p in palavras_google for p in palavras_ia if len(p) > 3):
+                return None
+
+            maps_url = f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(nome_google)}&query_place_id={place['place_id']}"
+            return {"nome": place['name'], "url": maps_url}
     except:
         return None
     return None
 
-# --- ESTILO CUSTOMIZADO ---
+# --- ESTILO ---
 st.markdown("""
 <style>
     .stButton>button { width: 100%; border-radius: 20px; background-color: #007BFF; color: white; height: 3.5em; font-weight: bold; }
     .premium-box { background-color: #f0f2f6; padding: 20px; border-radius: 15px; border: 1px solid #007BFF; margin-bottom: 20px; text-align: center; }
-    .stTextInput>div>div>input { border-radius: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- INTERFACE PRINCIPAL ---
+# --- INTERFACE ---
 st.title("📍 NomadIA Pro")
 
-# --- LÓGICA DE COMPARTILHAMENTO ---
+# COMPARTILHAMENTO (Permalinks)
 if "roteiro_id" in st.query_params:
     try:
         res = supabase.table("roteiros").select("*").eq("id", st.query_params["roteiro_id"]).execute()
         if res.data:
             roteiro = res.data[0]
-            st.success(f"Roteiro Carregado para {roteiro['cidade']}")
+            st.success(f"Roteiro para: {roteiro['cidade']}")
             st.markdown(roteiro['conteudo'])
-            if st.button("✨ Criar meu Próprio Roteiro"):
+            if st.button("✨ Criar Novo Roteiro"):
                 st.query_params.clear()
                 st.rerun()
             st.stop()
-    except:
-        st.error("Roteiro não encontrado.")
+    except: pass
 
-# --- FORMULÁRIO DE ENTRADA ---
+# FORMULÁRIO
 cidade = st.text_input("Para onde vamos?", placeholder="Ex: Piracicaba, SP")
-
-tipo_roteiro = st.radio("Tipo de plano:", ["Roteiro Rápido (Horas)", "Viagem Completa (Dias)"], horizontal=True)
+tipo_roteiro = st.radio("Duração:", ["Horas (Hoje)", "Vários Dias"], horizontal=True)
 
 col1, col2 = st.columns(2)
 with col1:
-    if tipo_roteiro == "Roteiro Rápido (Horas)":
-        duracao = st.number_input("Duração (horas)", min_value=1, max_value=24, value=4)
+    if tipo_roteiro == "Horas (Hoje)":
+        duracao = st.number_input("Horas", 1, 24, 4)
         unidade = "horas"
     else:
-        duracao = st.number_input("Duração (dias)", min_value=1, max_value=30, value=3)
+        duracao = st.number_input("Dias", 1, 30, 3)
         unidade = "dias"
-    
-    veiculo = st.selectbox("Transporte", ["A pé", "Uber/Táxi", "Transporte Público", "Carro", "Motorhome"])
+    veiculo = st.selectbox("Transporte", ["A pé", "Uber/Táxi", "Carro", "Transporte Público"])
 
 with col2:
-    grupo = st.selectbox("Com quem?", ["Sozinho", "Casal", "Família", "Amigos"])
+    grupo = st.selectbox("Grupo", ["Sozinho", "Casal", "Família", "Amigos"])
     orcamento = st.select_slider("Orçamento", options=["Econômico", "Médio", "Luxo"])
 
-st.markdown("---")
-col_extra1, col_extra2 = st.columns(2)
-with col_extra1:
-    pet = st.toggle("Levando Pet? 🐾")
-with col_extra2:
-    vibe = st.multiselect("Vibe", ["Gastronomia", "Natureza", "História", "Cultura", "Wi-Fi"])
-
-pedidos = st.text_area("Notas extras (ex: evitar ladeiras, dieta vegana)")
+pet = st.toggle("Levando Pet? 🐾")
+vibe = st.multiselect("Vibe", ["Gastronomia", "Natureza", "História", "Cultura", "Lazer"])
+pedidos = st.text_area("Pedidos específicos (ex: lugares acessíveis)")
 cupom = st.text_input("Cupom de Desconto")
 
-# --- BOTÃO GERAR ---
-if st.button("Gerar Roteiro Inteligente 🚀"):
+if st.button("Gerar Roteiro NomadIA 🚀"):
     if not cidade:
-        st.warning("Diz a cidade aí!")
+        st.warning("Informe a cidade primeiro.")
     else:
-        # Lógica de Cupom / Regra de Negócio
-        is_premium = (tipo_roteiro == "Viagem Completa (Dias)") or (duracao > 6 and unidade == "horas")
+        is_premium = (tipo_roteiro == "Vários Dias") or (duracao > 6)
         pode_gerar = (cupom.lower() == "tripfree") if cupom else not is_premium
 
         if not pode_gerar:
-            st.markdown(f'''
-            <div class="premium-box">
-                <h4>🚀 Roteiro Premium</h4>
-                <p>Planos para {duracao} {unidade} exigem curadoria avançada.</p>
-                <p><b>Use o cupom TRIPFREE ou faça o upgrade.</b></p>
-            </div>
-            ''', unsafe_allow_html=True)
-            st.link_button("💳 Desbloquear Roteiro", "https://seu-link-pagamento.com")
+            st.markdown('<div class="premium-box"><h4>🚀 Roteiro Premium</h4><p>Use o cupom <b>TRIPFREE</b> para testar.</p></div>', unsafe_allow_html=True)
         else:
-            with st.spinner('Consultando Google Maps e Clima...'):
+            with st.spinner('Consultando inteligência e mapas...'):
                 agora = get_brasilia_time()
                 clima = get_weather(cidade)
                 
-                # 1. IA Gera o texto base
-                system_instruction = f"""
-                Você é o guia NomadIA Pro. Crie um roteiro realista e logístico.
-                Hoje é {agora.strftime('%A')}, agora são {agora.strftime('%H:%M')}.
-                REGRAS:
-                - Use APENAS locais reais e existentes.
-                - Se Pet={pet}, sugira locais Pet Friendly.
-                - TRANSPORTE: {veiculo}.
-                - IMPORTANTE: Coloque o nome de CADA local/ponto turístico sugerido entre asteriscos duplos (Ex: **Mercado Municipal**).
-                - Formate com horários (Ex: 14:00 - **Local**).
+                system_prompt = f"""
+                Você é o guia NomadIA Pro. Crie um roteiro realista para {cidade}.
+                Agora são {agora.strftime('%H:%M')} de {agora.strftime('%A')}.
+                REGRAS RÍGIDAS:
+                1. Use o nome completo oficial dos locais em {cidade}.
+                2. Verifique o horário: se o roteiro é à noite, não sugira locais que fecham às 17h.
+                3. Pet={pet}: sugira apenas locais Pet Friendly se for True.
+                4. Coloque CADA local sugerido entre asteriscos duplos (Ex: **Cervejaria Cevada Pura**).
                 """
-
-                user_context = f"Cidade: {cidade}. Duração: {duracao} {unidade}. Grupo: {grupo}. Orçamento: {orcamento}. Vibe: {vibe}. Pedidos: {pedidos}."
 
                 completion = client.chat.completions.create(
                     model="gpt-4o-mini",
-                    messages=[{"role": "system", "content": system_instruction}, {"role": "user", "content": user_context}],
+                    messages=[{"role": "system", "content": system_prompt}, 
+                              {"role": "user", "content": f"Roteiro de {duracao} {unidade} em {cidade}. Vibe: {vibe}. {pedidos}"}],
                     temperature=0.2
                 )
                 
                 resposta_ia = completion.choices[0].message.content
 
-                # 2. PÓS-PROCESSAMENTO DE LINKS (A Mágica)
-                locais_em_negrito = re.findall(r"\*\*(.*?)\*\*", resposta_ia)
-                roteiro_com_links = resposta_ia
-                
-                # Criar um set para não buscar o mesmo local duas vezes
-                for local in set(locais_em_negrito):
-                    # Ignora negritos que não são locais (ex: horários ou títulos)
-                    if len(local) > 3: 
-                        dados_google = buscar_detalhes_google(local, cidade)
-                        if dados_google:
-                            link_markdown = f"**{local}** [📍]({dados_google['url']})"
-                            roteiro_com_links = roteiro_com_links.replace(f"**{local}**", link_markdown)
+                # PROCESSAMENTO DE LINKS DO GOOGLE MAPS
+                locais = re.findall(r"\*\*(.*?)\*\*", resposta_ia)
+                roteiro_final = resposta_ia
+                for local in set(locais):
+                    if len(local) > 3:
+                        info = buscar_detalhes_google(local, cidade)
+                        if info:
+                            # Substitui o texto pelo link oficial
+                            roteiro_final = roteiro_final.replace(f"**{local}**", f"**{local}** [📍]({info['url']})")
 
-                # 3. EXIBIÇÃO FINAL
                 st.markdown("---")
-                st.markdown(f"### 🗓️ Plano para {cidade}")
-                st.info(f"🌦️ {clima} | 🕒 Início: {agora.strftime('%H:%M')}")
-                
-                st.markdown(roteiro_com_links)
+                st.info(f"🌦️ Clima: {clima} | 🕒 Início: {agora.strftime('%H:%M')}")
+                st.markdown(roteiro_final)
 
-                # 4. SALVAMENTO E COMPARTILHAMENTO
+                # SALVAR NO SUPABASE E GERAR LINK
                 try:
-                    res_db = supabase.table("roteiros").insert({"cidade": cidade, "conteudo": roteiro_com_links}).execute()
+                    res_db = supabase.table("roteiros").insert({"cidade": cidade, "conteudo": roteiro_final}).execute()
                     if res_db.data:
-                        novo_id = res_db.data[0]['id']
-                        link_share = f"https://nomadia.streamlit.app?roteiro_id={novo_id}"
-                        
+                        link_share = f"https://nomadia.streamlit.app?roteiro_id={res_db.data[0]['id']}"
                         st.markdown("### 📤 Compartilhar")
                         st.code(link_share)
-                        
-                        texto_wa = urllib.parse.quote(f"Olha o roteiro que fiz para {cidade}: {link_share}")
-                        st.link_button("📲 Enviar para WhatsApp", f"https://api.whatsapp.com/send?text={texto_wa}")
-                except Exception as e:
-                    st.error("Erro ao gerar link de compartilhamento.")
+                        st.link_button("📲 Enviar WhatsApp", f"https://api.whatsapp.com/send?text={urllib.parse.quote(link_share)}")
+                except:
+                    st.error("Roteiro gerado, mas falha ao criar link de compartilhamento.")
 
-st.markdown("<br><hr><center><small>NomadIA Pro v3.0</small></center>", unsafe_allow_html=True)
+st.markdown("<br><hr><center><small>NomadIA Pro v1.0 - BETA </small></center>", unsafe_allow_html=True)
