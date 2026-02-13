@@ -100,4 +100,73 @@ pedidos = st.text_area("Pedidos específicos (Ex: evitar ladeiras, lugares româ
 cupom_input = st.text_input("Cupom de Desconto")
 
 # --- GERAÇÃO DO ROTEIRO ---
-if st.button("Gerar Roteiro Nomad
+if st.button("Gerar Roteiro NomadIA 🚀"):
+    if not cidade_input:
+        st.warning("Informe a cidade.")
+    else:
+        is_premium = (tipo_op == "Dias") or (duracao_val > 6)
+        liberado = (cupom_input.lower() == "tripfree") if cupom_input else not is_premium
+        
+        if not liberado:
+            st.error("Roteiros de vários dias ou longos exigem o cupom TRIPFREE.")
+        else:
+            with st.spinner('Validando locais e otimizando logística...'):
+                agora = get_brasilia_time()
+                clima_txt = get_weather(cidade_input)
+                
+                system_instruction = f"""
+                Você é o guia NomadIA Pro especializado em logística.
+                Crie um roteiro de {duracao_val} {unidade} em {cidade_input}.
+                
+                REGRAS RÍGIDAS:
+                1. Mantenha os locais em um raio de 15km do centro de {cidade_input}.
+                2. LOGÍSTICA: Organize os locais em ordem geográfica lógica (proximidade).
+                3. Pet={pet_friendly}: Se True, priorize locais conhecidos como pet friendly.
+                4. Transporte={veiculo}: Considere o tempo de deslocamento.
+                5. Grupo={grupo} e Orçamento={orcamento}.
+                6. Coloque nomes de lugares entre asteriscos duplos (Ex: **Mercado Municipal**).
+                """
+
+                completion = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "system", "content": system_instruction}, 
+                              {"role": "user", "content": f"Foco: {vibe}. Pedidos: {pedidos}"}],
+                    temperature=0.3
+                )
+                
+                texto_original = completion.choices[0].message.content
+                locais_extraidos = re.findall(r"\*\*(.*?)\*\*", texto_original)
+                
+                # FILTRO DE QUALIDADE: Apaga linhas de locais não encontrados/distantes
+                roteiro_limpo = texto_original
+                for loc in set(locais_extraidos):
+                    info_g = buscar_detalhes_google(loc, cidade_input)
+                    if info_g:
+                        roteiro_limpo = roteiro_limpo.replace(f"**{loc}**", f"**{loc}** [📍]({info_g['url']})")
+                    else:
+                        linhas = roteiro_limpo.split('\n')
+                        roteiro_limpo = '\n'.join([l for l in linhas if f"**{loc}**" not in l])
+
+                # EXIBIÇÃO
+                st.markdown("---")
+                st.info(f"🌦️ {clima_txt} | 🕒 Início: {agora.strftime('%H:%M')}")
+                st.markdown(roteiro_limpo)
+
+                # OPÇÕES EXTRAS
+                st.markdown("---")
+                col_f1, col_f2 = st.columns(2)
+                with col_f1:
+                    city_q = urllib.parse.quote(f"Melhores lugares em {cidade_input} TripAdvisor")
+                    st.link_button("🌐 Ver no TripAdvisor", f"https://www.google.com/search?q={city_q}")
+                with col_f2:
+                    if st.button("🔄 Ajustar este Roteiro"): st.rerun()
+
+                # SALVAMENTO
+                try:
+                    res = supabase.table("roteiros").insert({"cidade": cidade_input, "conteudo": roteiro_limpo}).execute()
+                    link_share = f"https://nomadia.streamlit.app?roteiro_id={res.data[0]['id']}"
+                    st.code(link_share)
+                    st.link_button("📲 Enviar WhatsApp", f"https://api.whatsapp.com/send?text={urllib.parse.quote(link_share)}")
+                except: pass
+
+st.markdown("<br><hr><center><small>NomadIA Pro v3.0</small></center>", unsafe_allow_html=True)
