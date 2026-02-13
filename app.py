@@ -20,23 +20,22 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # ---------------------------------------------------
 # CORREÇÃO LOGIN SUPABASE
 # ---------------------------------------------------
-query_params = st.query_params
 
-if "code" in query_params:
-    try:
-        supabase.auth.exchange_code_for_session(
-            query_params["code"]
-        )
-        st.query_params.clear()
-        st.rerun()
-    except Exception as e:
-        st.error(f"Erro ao validar login: {e}")
-        st.stop()
 # tenta recuperar sessão existente
 session = supabase.auth.get_session()
 
 if session and session.session:
     st.session_state["user"] = session.session.user.email
+
+session = supabase.auth.get_session()
+
+if not session or not session.session:
+    session = supabase.auth.refresh_session()
+
+if session and session.session:
+    st.session_state["user"] = session.session.user.email
+
+# ---------------------------------------------------
 
 # --- TELA DE LOGIN ---
 if "user" not in st.session_state:
@@ -167,5 +166,6 @@ if st.button("Gerar Roteiro"):
                 st.link_button("📲 Enviar para WhatsApp", link_wa)
 
 st.markdown("<br><hr><center><small>NomadAI Pro v2.0</small></center>", unsafe_allow_html=True)
+
 
 
