@@ -5,18 +5,18 @@ from datetime import datetime
 import requests
 import pytz
 
-# 1. Configuração da Página
+# --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="NomadAI Pro", page_icon="📍", layout="centered")
 
-# Estilo para Mobile
 st.markdown("""
     <style>
     .main { max-width: 500px; margin: 0 auto; }
-    .stButton>button { width: 100%; border-radius: 20px; background-color: #007BFF; color: white; font-weight: bold; }
+    .stButton>button { width: 100%; border-radius: 20px; background-color: #007BFF; color: white; font-weight: bold; height: 3em; }
+    .premium-box { background-color: #f0f2f6; padding: 20px; border-radius: 15px; border: 1px solid #007BFF; }
     </style>
     """, unsafe_allow_html=True)
 
-# 2. Funções Auxiliares (Clima e Hora de Brasília)
+# --- FUNÇÕES AUXILIARES ---
 def get_weather(city):
     try:
         url = f"https://wttr.in/{city}?format=j1"
@@ -32,85 +32,68 @@ def get_brasilia_time():
     tz = pytz.timezone('America/Sao_Paulo')
     return datetime.now(tz)
 
-# 3. Cabeçalho e Setup
-st.title("📍 NomadAI Pro")
+# --- SETUP IA ---
 if "OPENAI_API_KEY" in st.secrets:
     client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 else:
-    st.error("Configure sua API Key nos Secrets.")
+    st.error("Configure sua API Key nos Secrets do Streamlit.")
     st.stop()
 
-# 4. Interface de Entrada
-cidade = st.text_input("Onde você está?", placeholder="Ex: Paraty, RJ")
+# --- INTERFACE ---
+st.title("📍 NomadAI Pro")
+st.subheader("Seu guia logístico inteligente")
 
-# Captura hora e data de Brasília
+cidade = st.text_input("Onde você está ou para onde vai?", placeholder="Ex: Paraty, RJ")
+
+# Captura contexto temporal
 agora = get_brasilia_time()
 hora_atual = agora.strftime("%H:%M")
 data_atual = agora.strftime("%d/%m/%Y")
 
+# Estratégia de Negócio: Seleção de Tipo de Roteiro
+tipo_roteiro = st.radio("O que você precisa?", ["Roteiro Rápido (Hoje)", "Planejamento de Vários Dias"])
+
 col1, col2 = st.columns(2)
 with col1:
-    veiculo = st.selectbox("Veículo", ["Carro", "Motorhome", "Mochileiro"])
-    grupo = st.selectbox("Grupo", ["Sozinho", "Casal", "Família", "Amigos"])
-with col2:
-    orcamento = st.select_slider("Orçamento", options=["Econômico", "Médio", "Luxo"])
-    # SELETOR DE DURAÇÃO
-    duracao = st.number_input("Duração (horas)", min_value=1, max_value=24, value=4)
-
-vibe = st.multiselect("Vibe", ["Natureza", "Cultura", "Trabalho", "Gastronomia", "Praia"])
-pet = st.toggle("Com Pet? 🐾")
-pedidos = st.text_area("Pedidos específicos (ex: evitar ladeiras, wi-fi forte)")
-
-# 5. Geração do Roteiro
-if st.button("Gerar Roteiro Inteligente"):
-    if not cidade:
-        st.warning("Informe a cidade.")
+    if tipo_roteiro == "Roteiro Rápido (Hoje)":
+        duracao = st.number_input("Duração (em horas)", min_value=1, max_value=12, value=4)
+        unidade = "horas"
     else:
-        with st.spinner('Checando o tempo e planejando seu tempo...'):
-            clima = get_weather(cidade)
-            
-            prompt = f"""
-            Você é um guia local expert. Gere um roteiro baseado nestes dados reais:
-            
-            CONTEXTO TEMPORAL E CLIMÁTICO:
-            - Cidade: {cidade}
-            - Data: {data_atual}
-            - Hora de Início: {hora_atual}
-            - Duração Total: {duracao} horas
-            - Clima agora: {clima}
+        duracao = st.number_input("Duração (em dias)", min_value=2, max_value=30, value=3)
+        unidade = "dias"
+    
+    veiculo = st.selectbox("Veículo", ["Carro", "Motorhome", "Van/Kombi", "A pé"])
 
-            PERFIL DO VIAJANTE:
-            - Veículo: {veiculo}. Grupo: {grupo}. Pet: {pet}. Orçamento: {orcamento}.
-            - Vibe: {vibe}. Pedidos: {pedidos}.
+with col2:
+    grupo = st.selectbox("Grupo", ["Sozinho", "Casal", "Família (Crianças)", "Amigos"])
+    orcamento = st.select_slider("Orçamento", options=["Econômico", "Médio", "Luxo"])
 
-            REGRAS DO ROTEIRO:
-            1. O roteiro deve cobrir exatamente {duracao} horas, começando às {hora_atual}.
-            2. Se o clima for de chuva, sugira apenas atividades em locais cobertos.
-            3. Se for noite, foque em segurança e vida noturna.
-            4. Se for Motorhome, garanta que o tempo de deslocamento e estacionamento seja realista.
-            5. Formate com horários (ex: {hora_atual} - 10:30) e emojis.
-            """
-            
-            try:
-                completion = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": "Você é um guia de viagem ultra-preciso com horários e logística."},
-                        {"role": "user", "content": prompt}
-                    ]
-                )
-                
-                resposta = completion.choices[0].message.content
-                
-                # Exibição
-                st.info(f"🕒 Gerado para início às {hora_atual} | Tempo total: {duracao}h | Clima: {clima}")
-                st.markdown(resposta)
-                
-                # Botão WhatsApp
-                link_wa = f"https://api.whatsapp.com/send?text={urllib.parse.quote(resposta)}"
-                st.link_button("📲 Enviar para o WhatsApp", link_wa)
-                st.balloons()
-            except Exception as e:
-                st.error(f"Erro na API: {e}")
+pet = st.toggle("Levando Pet? 🐾")
+vibe = st.multiselect("Vibe do passeio", ["Natureza", "História/Cultura", "Gastronomia", "Trabalho/Wi-Fi", "Praia"])
+pedidos = st.text_area("Pedidos específicos (ex: evitar ladeiras, vegetariano, trilhas leves)")
 
-st.markdown("<br><hr><center><small>NomadAI v1.2 | Horário de Brasília</small></center>", unsafe_allow_html=True)
+# --- LÓGICA DE PROCESSAMENTO ---
+if st.button("Gerar Roteiro"):
+    if not cidade:
+        st.warning("Por favor, informe a cidade.")
+    else:
+        # Lógica de Paywall (Modelo de Negócio)
+        # Exemplo: Mais de 6 horas ou Vários Dias são pagos
+        is_premium = tipo_roteiro == "Planejamento de Vários Dias" or (tipo_roteiro == "Roteiro Rápido (Hoje)" and duracao > 6)
+        
+        # Simulação de verificação de cupom (Para parcerias com pousadas)
+        # Se você passar ?pousada=nomedapousada na URL, poderia liberar aqui.
+        cupom = st.text_input("Possui código de parceiro/pousada? (Opcional)")
+        liberado = True if cupom.lower() == "tripfree" else not is_premium # "tripfree" é um exemplo de cupom
+
+        if not liberado:
+            st.markdown(f"""
+            <div class="premium-box">
+                <h4>🚀 Roteiro Premium Detectado</h4>
+                <p>Planejamentos de <b>{duracao} {unidade}</b> exigem um nível maior de processamento logístico.</p>
+                <p><b>Valor: R$ 9,90</b></p>
+            </div>
+            """, unsafe_allow_html=True)
+            st.link_button("💳 Desbloquear agora no Stripe", "https://seu-link-de-pagamento-aqui.com")
+            st.info("Dica: Use o cupom 'tripfree' para testar a liberação agora.")
+        else:
